@@ -6,3 +6,4 @@ matplotlib
 plotly
 statsmodels
 seaborn
+pandas_datareader
