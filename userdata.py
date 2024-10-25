@@ -8,6 +8,17 @@ import time
 conn = sqlite3.connect('clients.db')
 cursor = conn.cursor()
 
+# Create the clients table if it doesn’t exist
+cursor.execute('''
+    CREATE TABLE IF NOT EXISTS clients (
+        username TEXT PRIMARY KEY,
+        password TEXT,
+        expiry_date TEXT,
+        permissions TEXT
+    )
+''')
+conn.commit()
+
 # Function to retrieve client data by username
 def get_client(username):
     cursor.execute('SELECT * FROM clients WHERE username = ?', (username,))
