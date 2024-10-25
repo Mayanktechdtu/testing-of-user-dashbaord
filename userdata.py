@@ -1,48 +1,43 @@
 import streamlit as st
 from datetime import datetime
-import json
+import sqlite3
 import yfinance as yf
 import time
-import pandas as pd
-import seaborn as sns
-import matplotlib.pyplot as plt
-from matplotlib.colors import TwoSlopeNorm
-from pandas_datareader import data as pdr
-import numpy as np
 
+# Connect to the SQLite database (creates the file if it doesn’t exist)
+conn = sqlite3.connect('clients.db')
+cursor = conn.cursor()
 
-# Load user data from a JSON file
-def load_user_data():
-    try:
-        with open('user_data.json', 'r') as f:
-            return json.load(f)
-    except FileNotFoundError:
-        return {}
-
-
-# Load existing users from the JSON file
-users = load_user_data()
+# Function to retrieve client data by username
+def get_client(username):
+    cursor.execute('SELECT * FROM clients WHERE username = ?', (username,))
+    client = cursor.fetchone()
+    if client:
+        return {
+            'username': client[0],
+            'password': client[1],
+            'expiry_date': client[2],
+            'permissions': client[3].split(',')
+        }
+    return None
 
 # Function to check user access and calculate remaining days based on permissions
 def check_user_access(username):
-    user_data = users.get(username, {})
+    client_data = get_client(username)
     access_status = {}
 
-    if user_data:
-        # Check expiry date
-        expiry_date = datetime.strptime(user_data['expiry_date'], '%Y-%m-%d')
+    if client_data:
+        expiry_date = datetime.strptime(client_data['expiry_date'], '%Y-%m-%d')
         if datetime.now() > expiry_date:
-            return {}  # Return empty dictionary if access has expired
+            return {}  # Return empty if access has expired
         
         # Check permissions for dashboards
-        permitted_dashboards = user_data.get('permissions', [])
+        permitted_dashboards = client_data['permissions']
         for dashboard in ['dashboard1', 'dashboard2', 'dashboard3', 'dashboard4', 'dashboard5', 'dashboard6']:
             if dashboard in permitted_dashboards:
-                # Calculate remaining days
                 days_left = (expiry_date - datetime.now()).days
                 access_status[dashboard] = days_left
             else:
-                # If not permitted, mark as no access
                 access_status[dashboard] = "No access"
     
     return access_status
@@ -59,9 +54,8 @@ def display_user_access():
         for i in range(1, 7):
             dashboard_name = f'dashboard{i}'
             if dashboard_name in access_status:
-                # Check if access is granted or denied
                 if access_status[dashboard_name] == "No access":
-                    # Display access denied with red and dark colors
+                    # Access denied card
                     card_html = f"""
                     <div style='background-color: #4a1414; color: #e74c3c; padding: 20px;
                         margin: 10px; border-radius: 12px; box-shadow: 4px 4px 20px rgba(0, 0, 0, 0.4);
@@ -71,7 +65,7 @@ def display_user_access():
                     </div>
                     """
                 else:
-                    # Display access granted with purple and blue colors
+                    # Access granted card
                     card_html = f"""
                     <div style='background-color: #2e2b5f; color: #2ecc71; padding: 20px;
                         margin: 10px; border-radius: 12px; box-shadow: 4px 4px 20px rgba(0, 0, 0, 0.4);
@@ -91,22 +85,20 @@ def display_user_access():
                     <p>🔒 Access not granted</p>
                 </div>
                 """
-            
             st.markdown(card_html, unsafe_allow_html=True)
         
         st.markdown("</div>", unsafe_allow_html=True)
     else:
         st.write("Please log in to see your dashboard access status.")
 
-
-# Function to fetch the Nifty 50 current price and show a message based on market condition
+# Fetch the Nifty 50 current price and show a message based on market condition
 def fetch_nifty50_and_market_condition():
     ticker = yf.Ticker('^NSEI')  # Nifty 50 Index
     nifty_data = ticker.history(period='2d')  # Fetch 2 days of data to get the previous close
 
     if not nifty_data.empty and len(nifty_data) >= 2:
-        current_price = nifty_data['Close'][-1]  # Get the latest close price
-        previous_close = nifty_data['Close'][-2]  # Get the previous day's close price
+        current_price = nifty_data['Close'][-1]
+        previous_close = nifty_data['Close'][-2]
         price_change_percentage = ((current_price - previous_close) / previous_close) * 100
 
         # Display appropriate message based on market condition
@@ -316,142 +308,7 @@ def main_dashboard():
 # Blank dashboard placeholders with back button and navigation to other dashboards based on granted permissions
 def dashboard1():
     st.title("Dashboard 1")
-
-    # Override Yahoo Finance restrictions
-    yf.pdr_override()
-
-    # Define the list of Nifty 50 top 5 stock symbols (you can update this list)
-    stocks = {
-        'TCS': 'TCS.NS',
-        'Infosys': 'INFY.NS',
-        'Reliance': 'RELIANCE.NS',
-        'HDFC Bank': 'HDFCBANK.NS',
-        'ICICI Bank': 'ICICIBANK.NS'
-    }
-
-    # Function to download stock data
-    @st.cache
-    def download_stock_data(stock_symbol):
-        data = pdr.get_data_yahoo(stock_symbol, start="2000-01-01", end="2024-01-01")
-        return data
-
-    # Function to calculate monthly percentage change (based on 1st day opening and last day closing)
-    def calculate_monthly_percentage_change(data):
-        # Reset the index to work with dates
-        data = data.reset_index()
-
-        # Extract year and month from the Date column
-        data['Year'] = data['Date'].dt.year
-        data['Month'] = data['Date'].dt.month
-
-        # Get the opening price of the first day of each month and the closing price of the last day of each month
-        monthly_data = data.groupby(['Year', 'Month']).agg(
-            Opening_Price=('Open', 'first'),
-            Closing_Price=('Close', 'last')
-        ).reset_index()
-
-        # Calculate the monthly percentage change
-        monthly_data['Pct Change'] = ((monthly_data['Closing_Price'] - monthly_data['Opening_Price']) / monthly_data['Opening_Price']) * 100
-
-        # Pivot to get the heatmap structure (years as rows, months as columns)
-        heatmap_data = monthly_data.pivot(index='Year', columns='Month', values='Pct Change')
-
-        # Add a row for the average percentage change for each month across all years
-        heatmap_data.loc['Average'] = heatmap_data.mean()
-
-        # Convert month numbers to month names for better readability
-        heatmap_data.columns = [pd.to_datetime(f'{m}', format='%m').strftime('%B') for m in heatmap_data.columns]
-
-        return heatmap_data, monthly_data
-
-    # Function to calculate the number of positive months and the ratio
-    def calculate_positive_ratio(monthly_data):
-        positive_count = monthly_data.groupby('Month')['Pct Change'].apply(lambda x: (x > 0).sum())  # Number of positive months
-        total_count = monthly_data.groupby('Month')['Pct Change'].count()  # Total number of months
-        ratio = (positive_count / total_count) * 100  # Positive ratio as a percentage
-
-        # Convert month numbers to month names
-        month_names = [pd.to_datetime(f'{m}', format='%m').strftime('%B') for m in total_count.index]
-
-        # Create a dataframe to display
-        ratio_data = pd.DataFrame({
-            'Month': month_names,
-            'Positive Months': positive_count.values,
-            'Total Months': total_count.values,
-            'Positive Ratio (%)': ratio.values
-        }).set_index('Month')
-
-        return ratio_data
-
-    # Function to calculate yearly percentage change
-    def calculate_yearly_percentage_change(data):
-        # Ensure the 'Year' column is extracted from the Date column
-        data = data.reset_index()
-        data['Year'] = data['Date'].dt.year
-
-        yearly_data = data.groupby('Year').agg(
-            Opening_Price=('Open', 'first'),
-            Closing_Price=('Close', 'last')
-        ).reset_index()
-
-        # Calculate the yearly percentage change
-        yearly_data['Yearly Pct Change'] = ((yearly_data['Closing_Price'] - yearly_data['Opening_Price']) / yearly_data['Opening_Price']) * 100
-
-        return yearly_data[['Year', 'Yearly Pct Change']].set_index('Year')
-
-    # Streamlit App Layout
-    st.title("Nifty 50 Top 5 Stocks - Monthly and Yearly Performance Heatmap")
-    st.write("Select a stock from the dropdown below to view its historical performance based on the opening price of the first day of each month and the closing price of the last day of the month.")
-
-    # Dropdown menu to select a stock
-    selected_stock = st.selectbox("Select Stock", list(stocks.keys()))
-
-    # Get the selected stock symbol
-    stock_symbol = stocks[selected_stock]
-
-    # Download stock data for the selected stock
-    stock_data = download_stock_data(stock_symbol)
-
-    # Calculate monthly percentage change
-    monthly_returns, monthly_data = calculate_monthly_percentage_change(stock_data)
-
-    # Calculate the positive-to-total ratio
-    positive_ratio_data = calculate_positive_ratio(monthly_data)
-
-    # Calculate yearly percentage change
-    yearly_returns = calculate_yearly_percentage_change(stock_data)
-
-    # Add the yearly percentage change as a new column to the heatmap
-    monthly_returns['Yearly Change'] = yearly_returns['Yearly Pct Change']
-
-    # Display the heatmap with custom colormap for positive and negative values
-    st.subheader(f"Monthly and Yearly Percentage Change for {selected_stock} (2000 to 2024)")
-
-    fig, ax = plt.subplots(figsize=(12, 8))
-
-    # Use a TwoSlopeNorm to handle separate color mapping for positive and negative values
-    norm = TwoSlopeNorm(vmin=monthly_returns.min().min(), vcenter=0, vmax=monthly_returns.max().max())
-
-    # Create a custom colormap for positive (green) and negative (red) values
-    cmap = sns.color_palette("RdYlGn", as_cmap=True)
-
-    # Plot the heatmap
-    sns.heatmap(monthly_returns, cmap=cmap, norm=norm, annot=True, fmt=".1f", ax=ax, linewidths=0.5, cbar_kws={"label": "% Change"})
-
-    # Improve the heatmap appearance
-    ax.set_title(f"{selected_stock} Monthly Performance Heatmap (with Yearly % Change)", fontsize=16)
-    ax.set_ylabel("Year", fontsize=12)
-    ax.set_xlabel("Month", fontsize=12)
-    st.pyplot(fig)
-
-    # Display the positive months ratio data
-    st.subheader(f"Positive-to-Total Ratio for {selected_stock}")
-    st.write(positive_ratio_data)
-
-    # Show the raw data (optional)
-    if st.checkbox("Show raw data"):
-        st.write(stock_data)
-
+    st.write("This is where you will add your dashboard logic for Dashboard 1.")
     navigate_back_and_between_dashboards()
 
 def dashboard2():
@@ -481,7 +338,6 @@ def dashboard6():
 
 # Back button and inter-dashboard navigation options based on permissions
 def navigate_back_and_between_dashboards():
-    # Get user access permissions
     access_status = check_user_access(st.session_state['username'])
 
     if st.button("Back to Main Menu"):
@@ -490,44 +346,21 @@ def navigate_back_and_between_dashboards():
     st.write("---")
     st.write("Navigate to other dashboards you have access to:")
 
-    # Show buttons for only the dashboards the user has access to
-    if access_status.get('dashboard1') != "No access":
-        if st.button("Go to Dashboard 1"):
-            st.session_state['page'] = 'dashboard1'
-    if access_status.get('dashboard2') != "No access":
-        if st.button("Go to Dashboard 2"):
-            st.session_state['page'] = 'dashboard2'
-    if access_status.get('dashboard3') != "No access":
-        if st.button("Go to Dashboard 3"):
-            st.session_state['page'] = 'dashboard3'
-    if access_status.get('dashboard4') != "No access":
-        if st.button("Go to Dashboard 4"):
-            st.session_state['page'] = 'dashboard4'
-    if access_status.get('dashboard5') != "No access":
-        if st.button("Go to Dashboard 5"):
-            st.session_state['page'] = 'dashboard5'
-    if access_status.get('dashboard6') != "No access":
-        if st.button("Go to Dashboard 6"):
-            st.session_state['page'] = 'dashboard6'
+    for i in range(1, 7):
+        dashboard_name = f'dashboard{i}'
+        if access_status.get(dashboard_name) != "No access":
+            if st.button(f"Go to Dashboard {i}"):
+                st.session_state['page'] = dashboard_name
 
-# Function to handle routing between pages based on session state
+# Handle routing between pages based on session state
 def handle_dashboard_navigation():
     if 'page' not in st.session_state:
         st.session_state['page'] = 'main'
 
-    # Conditional rendering of pages based on session state
+    # Conditional rendering of pages
     if st.session_state['page'] == 'dashboard1':
         dashboard1()
-    elif st.session_state['page'] == 'dashboard2':
-        dashboard2()
-    elif st.session_state['page'] == 'dashboard3':
-        dashboard3()
-    elif st.session_state['page'] == 'dashboard4':
-        dashboard4()
-    elif st.session_state['page'] == 'dashboard5':
-        dashboard5()
-    elif st.session_state['page'] == 'dashboard6':
-        dashboard6()
+    # Add more conditions for other dashboards
     else:
         main_dashboard()
 
@@ -540,20 +373,20 @@ def user_login():
     password = st.text_input("Password", type="password")
 
     if st.button("Login"):
-        # Check if the username exists and the password matches
-        if username in users and users[username]['password'] == password:
-            # Check if the user's access has expired
-            expiry_date = datetime.strptime(users[username]['expiry_date'], '%Y-%m-%d')
+        client_data = get_client(username)
+        if client_data and client_data['password'] == password:
+            expiry_date = datetime.strptime(client_data['expiry_date'], '%Y-%m-%d')
             if datetime.now() > expiry_date:
                 st.error(f"Your access expired on {expiry_date.strftime('%Y-%m-%d')}. Please contact admin.")
             else:
-                # Login successful, update session state
+                # Login successful
                 st.session_state['logged_in'] = True
                 st.session_state['username'] = username
+                st.session_state['login_time'] = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
         else:
             st.error("Invalid username or password.")
 
-# Function to handle session-based login and navigation
+# Handle login and navigation
 def handle_login_navigation():
     if 'logged_in' not in st.session_state:
         st.session_state['logged_in'] = False
